@@ -7,6 +7,9 @@
 #include <WiFiUdp.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
+#include "secrets.hh"
+
+#define SIMULATION
 
 String fajr, sunrise, dhuhr, asr, maghrib, isha;
 
@@ -59,53 +62,102 @@ bool toggle = true;
 
 const uint8_t SEGMENTS[] = {0b01111111, 0b01111111, 0b01111111, 0b01111111};
 
-// void fetchPrayerTimes() {
-//   HTTPClient http;
-//   http.begin("http://nasif.ca/prayer-times?month=10&day=23");
-//   int httpCode = http.GET();
+void connect_eduroam() {
+  Serial.print("connecting to ");
+  Serial.print(WIFI_SSID);
+  Serial.print(" with identity ");
+  Serial.print(EAP_IDENTITY);
+  Serial.print(": ");
+  WiFi.disconnect(true);  //disconnect from wifi to set new wifi connection
+  WiFi.mode(WIFI_STA);    //init wifi mode
 
-//   if (httpCode > 0) {
-//     String payload = http.getString();
+  WiFi.begin(WIFI_SSID, WPA2_AUTH_PEAP, EAP_IDENTITY, EAP_USERNAME, EAP_PASSWORD);
 
-//     StaticJsonDocument<1024> doc;
-//     DeserializationError error = deserializeJson(doc, payload);
+  int i = 0;
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+    i++;
+    if (i >= 60) {  //after timeout - reset board
+      ESP.restart();
+      return;
+    }
+  }
+  Serial.println();
+  Serial.println("connected!");
+  Serial.print("ip address: ");
+  Serial.println(WiFi.localIP());
+}
 
-//     if (!error) {
-//       fajr = String(doc["fajr"].as<const char*>());
-//       sunrise = String(doc["sunrise"].as<const char*>());
-//       dhuhr = String(doc["dhuhr"].as<const char*>());
-//       asr = String(doc["asr"].as<const char*>());
-//       maghrib = String(doc["maghrib"].as<const char*>());
-//       isha = String(doc["isha"].as<const char*>());
+void prayer_times() {
+  if (WiFi.status() == WL_CONNECTED) {
+    HTTPClient http;
 
-//       Serial.println("fajr: " + fajr);
-//       Serial.println("sunrise: " + sunrise);
-//       Serial.println("dhuhr: " + dhuhr);
-//       Serial.println("asr: " + asr);
-//       Serial.println("maghrib: " + maghrib);
-//       Serial.println("isha: " + isha);
+    http.begin("http://nasif.ca/prayer-times");
+    int resp_code = http.GET();
 
-//       display1.displayTime(fajr.substring(0, 2).toInt(), fajr.substring(3, 5).toInt(), 1);
-//       display2.displayTime(sunrise.substring(0, 2).toInt(), sunrise.substring(3, 5).toInt(), 1);
-//       display3.displayTime(dhuhr.substring(0, 2).toInt(), dhuhr.substring(3, 5).toInt(), 1);
-//       display4.displayTime(asr.substring(0, 2).toInt(), asr.substring(3, 5).toInt(), 1);
-//       display5.displayTime(maghrib.substring(0, 2).toInt(), maghrib.substring(3, 5).toInt(), 1);
-//       display6.displayTime(isha.substring(0, 2).toInt(), isha.substring(3, 5).toInt(), 1);
-//     }
-//     else {
-//       Serial.println("failed to parse json: " + String(error.c_str()));
-//     }
-//   }
-//   else {
-//     Serial.println("http get failed: " + String(httpCode));
-//   }
+    if (resp_code > 0) {
+      String response = http.getString();
+      Serial.println(response);
 
-//   http.end();
-// }
+    }
+    else {
+      Serial.print("error in GET request: ");
+      Serial.println(resp_code);
+    }
+
+    http.end();  // Free resources
+  }
+}
+
+void prayer_times2() {
+  HTTPClient http;
+  http.begin("http://nasif.ca/prayer-times?month=10&day=23");
+  int httpCode = http.GET();
+
+  if (httpCode > 0) {
+    String payload = http.getString();
+
+    StaticJsonDocument<1024> doc;
+    DeserializationError error = deserializeJson(doc, payload);
+
+    if (!error) {
+      fajr = String(doc["fajr"].as<const char*>());
+      sunrise = String(doc["sunrise"].as<const char*>());
+      dhuhr = String(doc["dhuhr"].as<const char*>());
+      asr = String(doc["asr"].as<const char*>());
+      maghrib = String(doc["maghrib"].as<const char*>());
+      isha = String(doc["isha"].as<const char*>());
+
+      Serial.println("fajr: " + fajr);
+      Serial.println("sunrise: " + sunrise);
+      Serial.println("dhuhr: " + dhuhr);
+      Serial.println("asr: " + asr);
+      Serial.println("maghrib: " + maghrib);
+      Serial.println("isha: " + isha);
+
+      display1.displayTime(fajr.substring(0, 2).toInt(), fajr.substring(3, 5).toInt(), 1);
+      display2.displayTime(sunrise.substring(0, 2).toInt(), sunrise.substring(3, 5).toInt(), 1);
+      display3.displayTime(dhuhr.substring(0, 2).toInt(), dhuhr.substring(3, 5).toInt(), 1);
+      display4.displayTime(asr.substring(0, 2).toInt(), asr.substring(3, 5).toInt(), 1);
+      display5.displayTime(maghrib.substring(0, 2).toInt(), maghrib.substring(3, 5).toInt(), 1);
+      display6.displayTime(isha.substring(0, 2).toInt(), isha.substring(3, 5).toInt(), 1);
+    }
+    else {
+      Serial.println("failed to parse json: " + String(error.c_str()));
+    }
+  }
+  else {
+    Serial.println("http get failed: " + String(httpCode));
+  }
+
+  http.end();
+}
 
 
 void setup() {
   Serial.begin(9600);
+  delay(10);
   // TM1637
   display1.begin(CLK1, DIO1, 4);
   display2.begin(CLK2, DIO2, 4);
@@ -137,10 +189,14 @@ void setup() {
   max72.setZone(1, MAX_DEVICES - 4, MAX_DEVICES - 1);
 
   // wifi
-  WiFi.begin("Wokwi-GUEST");
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(1000);
-  }
+  #ifdef SIMULATION
+    WiFi.begin("Wokwi-GUEST");
+    while (WiFi.status() != WL_CONNECTED) {
+      delay(1000);
+    }
+  #else
+  connect_eduroam();
+  #endif
 
 }
 
@@ -162,10 +218,12 @@ void setup() {
 // }
 
 void loop() {
+  
   if (max72.displayAnimate()) {
     unsigned long t2 = millis();
     if (t2 - t1 >= interval) {
       t1 = t2;
+      prayer_times();
 
       if (toggle) {
         max72.displayZoneText(1, "12:45", PA_CENTER, 50, 5000, PA_PRINT);
